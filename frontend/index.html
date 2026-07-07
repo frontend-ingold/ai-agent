@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>My AI Agent</title>
+    <link rel="stylesheet" href="style.css" />
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+    <div class="app-shell">
+        <aside class="sidebar">
+            <div class="brand">
+                <div class="brand-mark">AI</div>
+                <div>
+                    <div class="brand-title">My AI Agent</div>
+                    <div class="brand-subtitle">Chat interface</div>
+                </div>
+            </div>
+
+            <button class="new-chat" type="button" id="newChat">+ New chat</button>
+
+            <div class="sidebar-card">
+                <div class="sidebar-label">Mode</div>
+                <div class="sidebar-value">Assistant</div>
+            </div>
+
+            <div class="sidebar-card">
+                <div class="sidebar-label">Tips</div>
+                <div class="sidebar-copy">Ask follow-ups, attach images, or paste screenshots directly into the composer.</div>
+            </div>
+        </aside>
+
+        <main class="chat-panel">
+            <header class="chat-header">
+                <div>
+                    <div class="chat-kicker">Conversation</div>
+                    <h1>Ask anything</h1>
+                </div>
+                <div class="status-pill">
+                    <span class="status-dot"></span>
+                    Ready
+                </div>
+            </header>
+
+            <section class="messages" id="messages" aria-live="polite"></section>
+
+            <footer class="composer-shell">
+                <div class="composer">
+                    <div id="preview" class="preview"></div>
+                    <textarea id="message" rows="1" placeholder="Message My AI Agent..."></textarea>
+                    <div class="composer-actions">
+                        <div class="action-group">
+                            <button id="attach" class="icon-button" type="button" aria-label="Attach image">&#128206;</button>
+                            <button id="clear" class="ghost-button" type="button">Clear</button>
+                        </div>
+                        <button id="send" class="send-button" type="button">Send</button>
+                    </div>
+                    <input id="fileInput" type="file"  multiple hidden />
+                </div>
+                <div class="composer-hint">Shift+Enter for a new line. Paste images to attach them.</div>
+            </footer>
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
