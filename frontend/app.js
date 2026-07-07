@@ -1,3 +1,9 @@
+// Use local backend when running the frontend locally, otherwise use the
+// deployed Vercel API. Update DEPLOYED_API_URL if the backend URL changes.
+const DEPLOYED_API_URL = "https://ai-agent-api.vercel.app";
+const isLocalHost = ["localhost", "127.0.0.1", ""].includes(window.location.hostname);
+const API_BASE_URL = isLocalHost ? "http://localhost:3000" : DEPLOYED_API_URL;
+
 const messages = document.getElementById("messages");
 const input = document.getElementById("message");
 const preview = document.getElementById("preview");
@@ -321,7 +327,7 @@ async function sendMessage() {
             form.append("files", file);
         });
 
-        const response = await fetch("http://localhost:3000/chat/stream", {
+        const response = await fetch(`${API_BASE_URL}/chat/stream`, {
             method: "POST",
             body: form,
             signal: activeAbortController.signal,
