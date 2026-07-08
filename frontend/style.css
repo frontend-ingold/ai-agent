@@ -211,6 +211,37 @@ button, textarea, input {
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: var(--muted);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.copy-button {
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 0.95rem;
+    line-height: 1;
+    padding: 2px 4px;
+    border-radius: 6px;
+    text-transform: none;
+    letter-spacing: normal;
+    transition: background 0.15s ease, color 0.15s ease, transform 0.1s ease;
+}
+
+.copy-button:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text);
+}
+
+.copy-button:active {
+    transform: scale(0.92);
+}
+
+.copy-button.copied {
+    color: #4ade80;
 }
 
 .chat-images {
@@ -360,6 +391,56 @@ button, textarea, input {
 .loading {
     color: var(--muted);
     font-style: italic;
+}
+
+.confirm-text {
+    margin-bottom: 10px;
+}
+
+.confirm-action {
+    margin-bottom: 14px;
+    font-size: 0.85rem;
+    color: var(--muted);
+}
+
+.confirm-action code {
+    padding: 2px 8px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--border);
+    color: #dce3f2;
+}
+
+.confirm-buttons {
+    display: flex;
+    gap: 10px;
+}
+
+.confirm-approve,
+.confirm-cancel {
+    border: 0;
+    cursor: pointer;
+    height: 38px;
+    padding: 0 16px;
+    border-radius: 12px;
+    font-weight: 600;
+}
+
+.confirm-approve {
+    color: white;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+}
+
+.confirm-cancel {
+    color: #dce3f2;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--border);
+}
+
+.confirm-approve:disabled,
+.confirm-cancel:disabled {
+    opacity: 0.6;
+    cursor: default;
 }
 
 @media (max-width: 960px) {

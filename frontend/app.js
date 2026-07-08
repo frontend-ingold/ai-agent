@@ -181,10 +181,51 @@ function createMessageElement(type, label) {
 
     const meta = document.createElement("div");
     meta.className = "message-meta";
-    meta.textContent = label;
+
+    const metaLabel = document.createElement("span");
+    metaLabel.className = "message-meta-label";
+    metaLabel.textContent = label;
+    meta.appendChild(metaLabel);
+
     div.appendChild(meta);
 
     return div;
+}
+
+// Adds a copy-to-clipboard icon into a message's meta row. getText is called
+// at click time so it can copy the final text even if the message streamed
+// in after this was attached.
+function addCopyButton(div, getText) {
+    const meta = div.querySelector(".message-meta");
+    if (!meta || meta.querySelector(".copy-button")) return;
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "copy-button";
+    btn.title = "Copy response";
+    btn.setAttribute("aria-label", "Copy response");
+    btn.innerHTML = "&#128203;"; // 📋
+
+    btn.addEventListener("click", async () => {
+        const text = getText();
+        if (!text) return;
+
+        try {
+            await navigator.clipboard.writeText(text);
+        } catch (err) {
+            console.error("Copy failed:", err);
+            return;
+        }
+
+        btn.innerHTML = "&#9989;"; // ✅
+        btn.classList.add("copied");
+        setTimeout(() => {
+            btn.innerHTML = "&#128203;";
+            btn.classList.remove("copied");
+        }, 1500);
+    });
+
+    meta.appendChild(btn);
 }
 
 function addUserMessage(text, images = []) {
@@ -222,6 +263,7 @@ function addSystemMessage(text) {
     div.appendChild(content);
     messages.appendChild(div);
     messages.scrollTop = messages.scrollHeight;
+    addCopyButton(div, () => text);
 }
 
 function addStreamingMessage() {
@@ -237,6 +279,87 @@ function addStreamingMessage() {
 function appendMarkdownStream(target, text) {
     target.innerHTML = marked.parse(text);
     messages.scrollTop = messages.scrollHeight;
+}
+
+// The backend writes this marker (instead of normal streamed text) when the
+// coding agent wants to write a file or run a git commit and is waiting on
+// human approval. Format: MARKER + JSON + MARKER.
+const CONTROL_MARKER = "\u0001CONFIRM_ACTION\u0001";
+
+function parseControlPayload(buffer) {
+    const body = buffer.slice(CONTROL_MARKER.length);
+    const endIdx = body.indexOf(CONTROL_MARKER);
+    const jsonText = endIdx === -1 ? body : body.slice(0, endIdx);
+
+    try {
+        return JSON.parse(jsonText);
+    } catch {
+        return null;
+    }
+}
+
+function renderConfirmationCard(div, content, payload) {
+    content.innerHTML = "";
+
+    const text = document.createElement("div");
+    text.className = "confirm-text";
+    text.textContent = payload.message;
+    content.appendChild(text);
+
+    if (payload.proposedAction) {
+        const actionLine = document.createElement("div");
+        actionLine.className = "confirm-action";
+        actionLine.innerHTML = `<code>${payload.proposedAction.tool}</code>`;
+        content.appendChild(actionLine);
+    }
+
+    const buttonRow = document.createElement("div");
+    buttonRow.className = "confirm-buttons";
+
+    const approveBtn = document.createElement("button");
+    approveBtn.type = "button";
+    approveBtn.className = "confirm-approve";
+    approveBtn.textContent = "Approve";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "confirm-cancel";
+    cancelBtn.textContent = "Cancel";
+
+    buttonRow.appendChild(approveBtn);
+    buttonRow.appendChild(cancelBtn);
+    content.appendChild(buttonRow);
+
+    const respond = async (approve) => {
+        approveBtn.disabled = true;
+        cancelBtn.disabled = true;
+        text.textContent = approve ? "Running..." : "Cancelling...";
+
+        try {
+            const res = await fetch(`${API_BASE_URL}/chat/confirm`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ confirmationId: payload.confirmationId, approve }),
+            });
+            const result = await res.json();
+
+            if (result.requiresConfirmation) {
+                renderConfirmationCard(div, content, result); // chained confirmation
+                return;
+            }
+
+            const finalText = result.message || "Done.";
+            content.innerHTML = marked.parse(finalText);
+            messages.scrollTop = messages.scrollHeight;
+            addCopyButton(div, () => finalText);
+        } catch (err) {
+            console.error(err);
+            content.innerHTML = `<div class="loading">Something went wrong confirming this action.</div>`;
+        }
+    };
+
+    approveBtn.addEventListener("click", () => respond(true));
+    cancelBtn.addEventListener("click", () => respond(false));
 }
 
 // Downscale + recompress images client-side before upload so the vision
@@ -333,26 +456,56 @@ async function sendMessage() {
             signal: activeAbortController.signal,
         });
 
-        if (!response.ok || !response.body) {
-            throw new Error("Streaming failed.");
+        if (!response.ok) {
+            let serverMessage = "Request failed.";
+            try {
+                const errBody = await response.json();
+                serverMessage = errBody.message || serverMessage;
+            } catch {
+                // response wasn't JSON — fall back to the generic message
+            }
+            throw new Error(serverMessage);
+        }
+
+        if (!response.body) {
+            throw new Error("Streaming failed: no response body.");
         }
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let textBuffer = "";
+        let isControlMessage = false;
 
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
 
             textBuffer += decoder.decode(value, { stream: true });
-            appendMarkdownStream(content, textBuffer);
+
+            if (!isControlMessage && textBuffer.startsWith(CONTROL_MARKER)) {
+                isControlMessage = true; // stop live-rendering, wait for the full payload
+            }
+
+            if (!isControlMessage) {
+                appendMarkdownStream(content, textBuffer);
+            }
+        }
+
+        if (isControlMessage) {
+            const payload = parseControlPayload(textBuffer);
+            if (payload) {
+                renderConfirmationCard(div, content, payload);
+            } else {
+                content.innerHTML = `<div class="loading">Received an unexpected response.</div>`;
+            }
+        } else if (textBuffer) {
+            addCopyButton(div, () => textBuffer);
         }
     } catch (err) {
         if (err.name === "AbortError") return;
         console.error(err);
         div.className = "message ai";
-        content.innerHTML = `<div class="loading">Something went wrong.</div>`;
+        content.innerHTML = `<div class="loading">${err.message || "Something went wrong."}</div>`;
     } finally {
         activeAbortController = null;
     }

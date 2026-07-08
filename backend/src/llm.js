@@ -128,7 +128,15 @@ async function streamOllama(body, onToken = () => {}) {
     }
 }
 
-export async function askLLM(input, images = []) {
+// Previous defaults (num_predict: 200, no explicit num_ctx) capped every
+// response to ~200 tokens and relied on Ollama's default context window
+// (often 2048 tokens) — both are far too small for returning a full source
+// file. These are the real ceilings; raise DEFAULT_NUM_PREDICT further if
+// you're regularly editing large files.
+const DEFAULT_NUM_PREDICT = 4096;
+const DEFAULT_NUM_CTX = 8192;
+
+export async function askLLM(input, images = [], optionOverrides = {}) {
     const files = Array.isArray(images) ? images : [];
     
     try {
@@ -141,7 +149,9 @@ export async function askLLM(input, images = []) {
             keep_alive: "30m",
             options: {
                 temperature: 0.2,
-                num_predict: 200
+                num_predict: DEFAULT_NUM_PREDICT,
+                num_ctx: DEFAULT_NUM_CTX,
+                ...optionOverrides
             }
         };
 
@@ -161,7 +171,7 @@ export async function askLLM(input, images = []) {
     }
 }
 
-export async function askLLMStream(input, images = [], onToken = () => {}) {
+export async function askLLMStream(input, images = [], onToken = () => {}, optionOverrides = {}) {
     const files = Array.isArray(images) ? images : [];
     
     try {
@@ -174,7 +184,9 @@ export async function askLLMStream(input, images = [], onToken = () => {}) {
             keep_alive: "30m",
             options: {
                 temperature: 0.2,
-                num_predict: 200
+                num_predict: DEFAULT_NUM_PREDICT,
+                num_ctx: DEFAULT_NUM_CTX,
+                ...optionOverrides
             }
         };
 

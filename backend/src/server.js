@@ -4,7 +4,7 @@ import multer from "multer";
 import fs from "fs";
 import path from "path";
 
-import { agent, agentStream } from "./agent.js";
+import { agent, agentStream, resumeAfterConfirmation } from "./agent.js";
 
 const app = express();
 const PORT = 3000;
@@ -13,6 +13,18 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Extensions treated as readable source/text — these get attached as inline
+// text context (like a code review), not sent to the vision model.
+const TEXT_FILE_EXTENSIONS = new Set([
+    ".js", ".jsx", ".ts", ".tsx", ".html", ".htm", ".css", ".scss",
+    ".json", ".md", ".txt", ".py", ".java", ".go", ".rb", ".php",
+    ".c", ".cpp", ".h", ".yml", ".yaml", ".xml", ".csv", ".sql", ".sh"
+]);
+
+function isTextFile(filename) {
+    return TEXT_FILE_EXTENSIONS.has(path.extname(filename).toLowerCase());
+}
+
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: { 
@@ -20,11 +32,10 @@ const upload = multer({
         files: 10 // Max 10 files per request
     },
     fileFilter(req, file, cb) {
-        // Allow image files
-        if (file.mimetype.startsWith("image/")) {
+        if (file.mimetype.startsWith("image/") || isTextFile(file.originalname)) {
             cb(null, true);
         } else {
-            cb(new Error(`File type not allowed: ${file.mimetype}. Only image files are supported.`));
+            cb(new Error(`File type not allowed: ${file.mimetype || path.extname(file.originalname)}. Supported: images, and common code/text files (.js, .html, .css, .json, .py, etc.).`));
         }
     }
 });
@@ -46,7 +57,7 @@ app.post("/chat", upload.array("files", 10), async (req, res) => {
         if (!message && files.length === 0) {
             return res.status(400).json({ 
                 success: false, 
-                message: "Please provide a message or upload at least one image." 
+                message: "Please provide a message or upload at least one file." 
             });
         }
 
@@ -58,9 +69,12 @@ app.post("/chat", upload.array("files", 10), async (req, res) => {
             });
         }
 
-        console.log(`📁 Processing ${files.length} file(s) with message: "${message.substring(0, 50)}..."`);
+        const images = files.filter((f) => f.mimetype.startsWith("image/"));
+        const codeFiles = files.filter((f) => isTextFile(f.originalname));
 
-        const result = await agent(message, files);
+        console.log(`📁 Processing ${images.length} image(s), ${codeFiles.length} text file(s) with message: "${message.substring(0, 50)}..."`);
+
+        const result = await agent(message, images, codeFiles);
         res.json(result);
     } catch (err) {
         console.error("Error in /chat:", err);
@@ -68,6 +82,7 @@ app.post("/chat", upload.array("files", 10), async (req, res) => {
         res.status(500).json({ success: false, message: err.message });
     }
 });
+
 
 app.post("/chat/stream", upload.array("files", 10), async (req, res) => {
     const files = req.files || [];
@@ -78,25 +93,24 @@ app.post("/chat/stream", upload.array("files", 10), async (req, res) => {
         // Validate input
         if (!message && files.length === 0) {
             cleanupFiles(files);
-            res.status(400);
-            res.write(JSON.stringify({ 
+            return res.status(400).json({ 
                 success: false, 
-                message: "Please provide a message or upload at least one image." 
-            }));
-            return res.end();
+                message: "Please provide a message or upload at least one file." 
+            });
         }
 
         if (files.length > 10) {
             cleanupFiles(files);
-            res.status(400);
-            res.write(JSON.stringify({ 
+            return res.status(400).json({ 
                 success: false, 
                 message: "Maximum 10 files allowed per request." 
-            }));
-            return res.end();
+            });
         }
 
-        console.log(`📁 Stream processing ${files.length} file(s) with message: "${message.substring(0, 50)}..."`);
+        const images = files.filter((f) => f.mimetype.startsWith("image/"));
+        const codeFiles = files.filter((f) => isTextFile(f.originalname));
+
+        console.log(`📁 Stream processing ${images.length} image(s), ${codeFiles.length} text file(s) with message: "${message.substring(0, 50)}..."`);
 
         res.status(200);
         res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
@@ -105,16 +119,36 @@ app.post("/chat/stream", upload.array("files", 10), async (req, res) => {
         res.flushHeaders?.();
 
         let finalMessage = "";
+        let streamedAny = false;
 
         const result = await agentStream(
             message,
-            files,
+            images,
+            codeFiles,
             (chunk, full) => {
+                streamedAny = true;
                 finalMessage = full;
                 res.write(chunk);
             },
             null
         );
+
+        if (result.requiresConfirmation) {
+            // The coding-agent loop paused before writing a file / committing.
+            // Send a control payload the frontend can detect and render as an
+            // approve/cancel card instead of markdown.
+            const payload = JSON.stringify({
+                confirmationId: result.confirmationId,
+                proposedAction: result.proposedAction,
+                message: result.message
+            });
+            res.write(`\u0001CONFIRM_ACTION\u0001${payload}\u0001CONFIRM_ACTION\u0001`);
+        } else if (!streamedAny && result.message) {
+            // The LLM-planner loop (coding requests) doesn't stream token-by-
+            // token like askLLMStream does — write its final answer now so
+            // the UI isn't left blank.
+            res.write(result.message);
+        }
 
         finalMessage = result.message || finalMessage;
         res.end();
@@ -124,6 +158,24 @@ app.post("/chat/stream", upload.array("files", 10), async (req, res) => {
         res.end();
     } finally {
         cleanupFiles(files);
+    }
+});
+
+// Approves or rejects a pending write action (file write, git commit) that
+// the agent paused on. Body: { confirmationId, approve: true|false }
+app.post("/chat/confirm", async (req, res) => {
+    try {
+        const { confirmationId, approve } = req.body || {};
+
+        if (!confirmationId) {
+            return res.status(400).json({ success: false, message: "confirmationId is required." });
+        }
+
+        const result = await resumeAfterConfirmation(confirmationId, Boolean(approve));
+        res.json(result);
+    } catch (err) {
+        console.error("Error in /chat/confirm:", err);
+        res.status(500).json({ success: false, message: err.message });
     }
 });
 
