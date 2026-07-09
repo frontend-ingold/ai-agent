@@ -26,4 +26,5 @@ Rules:
 - Prefer reading/searching before writing. Do not propose a write to a file you have not read first (unless it is a new file).
 - Once you have enough information to fully answer the developer's request, use "final".
 - If a tool has already failed twice for the same reason, stop retrying it and use "final" to explain the problem instead.
+- When a tool fails, your "final" message must quote the specific error/reason from the tool result (e.g. "ESLint isn't installed in this project — no eslint.config.js was found"), not a vague summary like "it failed with an error". The developer needs the actual reason to fix it.
 - Never invent a tool name that isn't in the list above.`;

@@ -1,6 +1,6 @@
 import fs from "fs/promises";
 import path from "path";
-import { PROJECT_ROOT } from "../config.js";
+import { getProjectRoot } from "../config.js";
 
 const IGNORED_DIRS = new Set(["node_modules", ".git", "dist", "build", ".next", "coverage"]);
 const MAX_MATCHES = 50;
@@ -11,7 +11,7 @@ function escapeRegex(str) {
     return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-async function walk(dir, pattern, matches, scanned) {
+async function walk(dir, pattern, matches, scanned, projectRoot) {
     if (matches.length >= MAX_MATCHES || scanned.count >= MAX_FILES_SCANNED) return;
 
     let entries;
@@ -28,7 +28,7 @@ async function walk(dir, pattern, matches, scanned) {
         const fullPath = path.join(dir, entry.name);
 
         if (entry.isDirectory()) {
-            await walk(fullPath, pattern, matches, scanned);
+            await walk(fullPath, pattern, matches, scanned, projectRoot);
             continue;
         }
 
@@ -39,7 +39,7 @@ async function walk(dir, pattern, matches, scanned) {
             for (let i = 0; i < lines.length && matches.length < MAX_MATCHES; i++) {
                 if (pattern.test(lines[i])) {
                     matches.push({
-                        file: path.relative(PROJECT_ROOT, fullPath),
+                        file: path.relative(projectRoot, fullPath),
                         line: i + 1,
                         text: lines[i].trim().slice(0, MAX_MATCH_LINE_LEN)
                     });
@@ -57,9 +57,10 @@ export async function codeSearch(query) {
     }
 
     try {
+        const projectRoot = getProjectRoot();
         const pattern = new RegExp(escapeRegex(query), "i");
         const matches = [];
-        await walk(PROJECT_ROOT, pattern, matches, { count: 0 });
+        await walk(projectRoot, pattern, matches, { count: 0 }, projectRoot);
 
         return {
             success: true,

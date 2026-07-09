@@ -1,6 +1,7 @@
 // src/planner.js
 import { askLLM } from "./llm.js";
 import { PLANNER_SYSTEM_PROMPT } from "./prompts/plannerPrompt.js";
+import { hasOpenProject } from "./config.js";
 
 // --- Fast, free, regex-based routing for the small set of intents where a
 // keyword match is reliable and unambiguous. This avoids burning an LLM
@@ -30,11 +31,32 @@ function looksLikeMemory(message) {
     return /\b(memory|remember|recall|forget|what did i say|what have i said)\b/i.test(message);
 }
 
+function looksLikeSmallTalk(message) {
+    // Deliberately narrow (exact-ish match, not a substring search) —
+    // greeting phrasing is far more predictable than feature-request
+    // phrasing, so this can be strict without risking false negatives on
+    // real requests the way a broader "coding keywords" list would.
+    return /^(hi|hello|hey+|yo|sup|good\s*(morning|afternoon|evening|night)|how\s*(are\s*you|'s\s*it\s*going)|thanks?( you)?|thx|ok(ay)?|cool|nice|great|bye|goodbye|see\s*ya|got\s*it)(\s+(there|guys?|team))?[\s!.,?]*$/i.test(message.trim());
+}
 function looksLikeGenericDatabase(message) {
     // Deliberately narrow now that "database" overlaps heavily with coding
     // vocabulary (queries about an app's DB schema/code should go to the
     // coding planner, not the toy database stub).
     return /\b(query the database|database record|customer database)\b/i.test(message);
+}
+
+// Lets the developer switch which local folder the agent operates on from
+// chat itself, not just the sidebar's "Open" button — e.g. "project
+// folder: C:\path\to\app", "open folder /home/me/app", "use this folder:
+// ../my-project". Captures everything after the trigger phrase as the path.
+const OPEN_PROJECT_REGEX = /^(?:project\s*folder|open\s*(?:folder|project)|use\s*(?:this\s*)?folder|set\s*(?:the\s*)?project\s*(?:root|folder))\s*(?:to)?\s*[:\-]?\s*(.+)$/i;
+
+function extractProjectPath(message) {
+    const match = message.trim().match(OPEN_PROJECT_REGEX);
+    if (!match) return null;
+    // Strips a trailing aside like "this one" or a trailing period, which
+    // people naturally tack on when pointing at a path in chat.
+    return match[1].replace(/\s*[.,]?\s*(this one|please|thanks)?\s*$/i, "").trim();
 }
 
 // Only route into the (expensive, multi-step) coding planner when the
@@ -43,8 +65,14 @@ function looksLikeGenericDatabase(message) {
 function looksLikeCoding(message) {
     const codingKeywords = /\b(file|files|folder|director(y|ies)|repo|repository|function|method|class|variable|bug|error|exception|stack ?trace|refactor|test|tests|lint|git|commit|diff|branch|code|codebase|implement|fix|debug|script|module|import|export|endpoint|api|server|component|deploy)\b/i;
     const looksLikeAFilename = /[\w-]+\.(js|ts|jsx|tsx|py|json|css|html|md|yml|yaml|java|go|rb|php|c|cpp|h)\b/i;
+    // Broader exploration/analysis phrasing ("analyze the project", "what
+    // does this project do", "explain this codebase") — these don't use
+    // narrow dev-jargon words above but still need listDir/readFile, not a
+    // generic chat answer.
+    const looksLikeProjectExploration = /\b(project|codebase|repo|application|app)\b.*\b(analy[sz]e|explain|understand|review|summar(y|ize)|explore|overview|walkthrough|what does|how does|structure)\b/i
+        .test(message) || /\b(analy[sz]e|explain|understand|review|summar(y|ize)|explore|overview|walkthrough)\b.*\b(project|codebase|repo|application|app)\b/i.test(message);
 
-    return codingKeywords.test(message) || looksLikeAFilename.test(message);
+    return codingKeywords.test(message) || looksLikeAFilename.test(message) || looksLikeProjectExploration;
 }
 
 export async function plan(message) {
@@ -66,6 +94,11 @@ export async function plan(message) {
         return { action: "tool", tool: "memory" };
     }
 
+    const projectPath = extractProjectPath(input);
+    if (projectPath) {
+        return { action: "tool", tool: "openProject", path: projectPath };
+    }
+
     if (looksLikeGenericDatabase(input)) {
         return { action: "tool", tool: "database", query: input };
     }
@@ -78,6 +111,19 @@ export async function plan(message) {
     // actually looks like it's about the codebase. Plain conversation
     // (greetings, general questions, etc.) goes straight to the LLM.
     if (looksLikeCoding(input)) {
+        return { action: "delegate_to_llm_planner" };
+    }
+
+    // Once the developer has explicitly opened a project, anything that
+    // wasn't caught above (calculator, date/time, memory, search, opening
+    // a different folder) is almost certainly about that project — even
+    // when phrased in product/UI terms with no dev jargon ("change the
+    // start counting button to blue"). Regex keyword-matching alone can't
+    // keep up with every way of describing a UI change, so once a project
+    // is open we lean on the coding loop (which has real file access) by
+    // default instead of falling back to a plain chat answer that has to
+    // guess/hallucinate about code it's never seen.
+    if (hasOpenProject() && !looksLikeSmallTalk(input)) {
         return { action: "delegate_to_llm_planner" };
     }
 

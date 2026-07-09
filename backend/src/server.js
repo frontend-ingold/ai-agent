@@ -5,6 +5,9 @@ import fs from "fs";
 import path from "path";
 
 import { agent, agentStream, resumeAfterConfirmation } from "./agent.js";
+import { getGeneratedFile } from "./fileStore.js";
+import { listConversations, searchConversations, getConversation, deleteConversation } from "./conversations.js";
+import { getProjectRoot, setProjectRoot, isAutoApplyEnabled, setAutoApply } from "./config.js";
 
 const app = express();
 const PORT = 3000;
@@ -74,7 +77,7 @@ app.post("/chat", upload.array("files", 10), async (req, res) => {
 
         console.log(`📁 Processing ${images.length} image(s), ${codeFiles.length} text file(s) with message: "${message.substring(0, 50)}..."`);
 
-        const result = await agent(message, images, codeFiles);
+        const result = await agent(message, images, codeFiles, req.body.conversationId || null);
         res.json(result);
     } catch (err) {
         console.error("Error in /chat:", err);
@@ -120,6 +123,7 @@ app.post("/chat/stream", upload.array("files", 10), async (req, res) => {
 
         let finalMessage = "";
         let streamedAny = false;
+        let conversationIdSent = false;
 
         const result = await agentStream(
             message,
@@ -130,7 +134,13 @@ app.post("/chat/stream", upload.array("files", 10), async (req, res) => {
                 finalMessage = full;
                 res.write(chunk);
             },
-            null
+            null,
+            req.body.conversationId || null,
+            (conversationId) => {
+                if (conversationIdSent) return;
+                conversationIdSent = true;
+                res.write(`\u0001CONVERSATION_ID\u0001${conversationId}\u0001CONVERSATION_ID\u0001`);
+            }
         );
 
         if (result.requiresConfirmation) {
@@ -177,6 +187,91 @@ app.post("/chat/confirm", async (req, res) => {
         console.error("Error in /chat/confirm:", err);
         res.status(500).json({ success: false, message: err.message });
     }
+});
+
+// Returns the folder the coding-agent tools (readFile, listDir, shell,
+// git, etc.) currently operate on.
+app.get("/project", (req, res) => {
+    res.json({ success: true, projectRoot: getProjectRoot() });
+});
+
+// Switches which local folder the coding-agent tools operate on — this is
+// the "Open folder" action, like Cursor/Codex. Takes effect immediately for
+// every subsequent tool call, no server restart needed. Body: { path }
+app.post("/project", (req, res) => {
+    try {
+        const { path: newPath } = req.body || {};
+
+        if (!newPath || !String(newPath).trim()) {
+            return res.status(400).json({ success: false, message: "A folder path is required." });
+        }
+
+        const resolved = setProjectRoot(newPath);
+        res.json({ success: true, projectRoot: resolved });
+    } catch (err) {
+        res.status(400).json({ success: false, message: err.message });
+    }
+});
+
+// Whether write tools (proposeWrite/commitWrite/gitCommit) execute
+// immediately or pause for approval. Off by default.
+app.get("/settings/auto-apply", (req, res) => {
+    res.json({ success: true, autoApply: isAutoApplyEnabled() });
+});
+
+app.post("/settings/auto-apply", (req, res) => {
+    const { enabled } = req.body || {};
+    const result = setAutoApply(enabled);
+    res.json({ success: true, autoApply: result });
+});
+
+// History sidebar: list all conversations (newest first), or filter with
+// ?q= to search titles + message content, ChatGPT-style.
+app.get("/conversations", (req, res) => {
+    try {
+        const q = req.query.q;
+        const results = q ? searchConversations(q) : listConversations();
+        res.json({ success: true, conversations: results });
+    } catch (err) {
+        console.error("Error in /conversations:", err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// Reopen a past conversation to continue/reuse it — returns full message
+// history, not just the summary the list endpoint gives.
+app.get("/conversations/:id", (req, res) => {
+    const conversation = getConversation(req.params.id);
+
+    if (!conversation) {
+        return res.status(404).json({ success: false, message: "Conversation not found." });
+    }
+
+    res.json({ success: true, conversation });
+});
+
+app.delete("/conversations/:id", (req, res) => {
+    const deleted = deleteConversation(req.params.id);
+
+    if (!deleted) {
+        return res.status(404).json({ success: false, message: "Conversation not found." });
+    }
+
+    res.json({ success: true });
+});
+
+// Serves a full file generated on-demand for a large-file "download"
+// request (see agent.js). Links expire after GENERATED_FILE_TTL_MS.
+app.get("/download/:id", (req, res) => {
+    const file = getGeneratedFile(req.params.id);
+
+    if (!file) {
+        return res.status(404).json({ success: false, message: "File not found or the link has expired." });
+    }
+
+    res.setHeader("Content-Disposition", `attachment; filename="${file.filename}"`);
+    res.setHeader("Content-Type", `${file.mimeType}; charset=utf-8`);
+    res.send(file.content);
 });
 
 // Error handling middleware for multer and custom errors

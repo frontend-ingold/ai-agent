@@ -1,7 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
 import { resolveSafePath } from "../utils/pathGuard.js";
-import { PROJECT_ROOT } from "../config.js";
+
 
 const MAX_FILE_BYTES = 200 * 1024; // keep file contents small enough for a prompt
 const IGNORED_DIRS = new Set(["node_modules", ".git", "dist", "build", ".next"]);
@@ -86,5 +86,3 @@ export async function commitWrite(relativePath, newContent) {
         return { success: false, error: `Could not write file: ${err.message}` };
     }
 }
-
-export { PROJECT_ROOT };

@@ -37,7 +37,18 @@ button, textarea, input {
 .app-shell {
     min-height: 100vh;
     display: grid;
-    grid-template-columns: 280px minmax(0, 1fr);
+    grid-template-columns: 280px 1fr;
+}
+
+.app-shell.fixed {
+    grid-template-columns: 280px 1fr;
+    position: relative;
+}
+
+.app-shell.fixed .chat-panel {
+    position: relative;
+    overflow-y: auto;
+    height: 100vh;
 }
 
 .sidebar {
@@ -96,6 +107,198 @@ button, textarea, input {
     box-shadow: 0 16px 34px rgba(79, 140, 255, 0.18);
     font-weight: 600;
     margin-bottom: 18px;
+}
+
+.toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    cursor: pointer;
+}
+
+.toggle-copy {
+    font-size: 0.85rem;
+    color: #c4cbda;
+    line-height: 1.4;
+}
+
+.toggle-switch {
+    position: relative;
+    flex-shrink: 0;
+    width: 40px;
+    height: 22px;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: absolute;
+    inset: 0;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid var(--border);
+    transition: background 0.15s ease;
+}
+
+.toggle-slider::before {
+    content: "";
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    left: 2px;
+    top: 2px;
+    border-radius: 50%;
+    background: #dce3f2;
+    transition: transform 0.15s ease;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    border-color: transparent;
+}
+
+.toggle-switch input:checked + .toggle-slider::before {
+    transform: translateX(18px);
+    background: white;
+}
+
+.toggle-warning {
+    margin-top: 10px;
+    font-size: 0.78rem;
+    color: #f0b429;
+    line-height: 1.4;
+}
+
+.project-path {
+    font-size: 0.82rem;
+    color: #c4cbda;
+    word-break: break-all;
+    margin-bottom: 12px;
+    line-height: 1.4;
+}
+
+.project-open-row {
+    display: flex;
+    gap: 8px;
+}
+
+.project-path-input {
+    flex: 1;
+    min-width: 0;
+    padding: 9px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text);
+    outline: none;
+    font-size: 0.85rem;
+}
+
+.project-path-input:focus {
+    border-color: var(--accent);
+}
+
+.project-open-row .ghost-button {
+    height: auto;
+    padding: 0 14px;
+    flex-shrink: 0;
+}
+
+.project-error {
+    color: #f87171;
+    font-size: 0.8rem;
+    margin-top: 8px;
+    min-height: 0;
+}
+
+.sidebar-section {
+    margin-bottom: 18px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.history-search {
+    width: 100%;
+    padding: 10px 14px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text);
+    outline: none;
+    margin-bottom: 10px;
+}
+
+.history-search::placeholder {
+    color: #7e8798;
+}
+
+.history-search:focus {
+    border-color: var(--accent);
+}
+
+.history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 320px;
+    overflow-y: auto;
+}
+
+.history-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.history-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.history-item.active {
+    background: rgba(79, 140, 255, 0.12);
+    border-color: rgba(79, 140, 255, 0.35);
+}
+
+.history-item-title {
+    font-size: 0.88rem;
+    color: #dce3f2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.history-item-delete {
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 0.85rem;
+    padding: 2px 6px;
+    border-radius: 6px;
+    flex-shrink: 0;
+}
+
+.history-item-delete:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #f87171;
+}
+
+.history-empty {
+    color: var(--muted);
+    font-size: 0.85rem;
+    padding: 8px 4px;
 }
 
 .sidebar-card {

@@ -1,8 +1,25 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { PROJECT_ROOT, SHELL_TIMEOUT_MS } from "../config.js";
+import { getProjectRoot } from "../config.js";
+import { SHELL_TIMEOUT_MS } from "../config.js";
 
 const execFileAsync = promisify(execFile);
+
+// On Windows, npm-installed CLIs (npx, npm, and anything they shim) are
+// actually .cmd files, not .exe. execFile deliberately doesn't use a shell
+// (that's what keeps this safe from injection — see the comment below), so
+// it won't auto-resolve the .cmd extension the way a shell would, and
+// fails with "spawn npx ENOENT" even though npx works fine from a normal
+// terminal. Explicitly resolving to the .cmd form here fixes that without
+// giving up the shell:false safety.
+const WINDOWS_CMD_SHIMS = new Set(["npx", "npm"]);
+
+function resolveCmd(cmd) {
+    if (process.platform === "win32" && WINDOWS_CMD_SHIMS.has(cmd)) {
+        return `${cmd}.cmd`;
+    }
+    return cmd;
+}
 
 // Deliberately NOT a general "run any shell string" tool. There is no
 // `exec`/shell:true anywhere here, so there's no shell-metacharacter
@@ -11,9 +28,11 @@ const execFileAsync = promisify(execFile);
 // the LLM never gets to construct an arbitrary command line, only fill in
 // specific parameters (like a commit message) for a known operation.
 export async function runArgs(cmd, args = [], { tolerateNonZeroExit = false } = {}) {
+    const resolvedCmd = resolveCmd(cmd);
+
     try {
-        const { stdout, stderr } = await execFileAsync(cmd, args, {
-            cwd: PROJECT_ROOT,
+        const { stdout, stderr } = await execFileAsync(resolvedCmd, args, {
+            cwd: getProjectRoot(),
             timeout: SHELL_TIMEOUT_MS,
             maxBuffer: 5 * 1024 * 1024
         });

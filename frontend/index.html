@@ -21,6 +21,43 @@
             <button class="new-chat" type="button" id="newChat">+ New chat</button>
 
             <div class="sidebar-card">
+                <div class="sidebar-label">Project folder</div>
+                <div class="project-path" id="projectPath">Loading...</div>
+                <div class="project-open-row">
+                    <input
+                        id="projectPathInput"
+                        class="project-path-input"
+                        type="text"
+                        placeholder="C:\path\to\your\project"
+                    />
+                    <button id="openProjectBtn" class="ghost-button" type="button">Open</button>
+                </div>
+                <div id="projectError" class="project-error"></div>
+            </div>
+
+            <div class="sidebar-card">
+                <div class="sidebar-label">Auto-apply changes</div>
+                <label class="toggle-row">
+                    <span class="toggle-copy">Write files without asking for approval</span>
+                    <span class="toggle-switch">
+                        <input type="checkbox" id="autoApplyToggle" />
+                        <span class="toggle-slider"></span>
+                    </span>
+                </label>
+                <div class="toggle-warning">⚠️ Off is safer — on lets the agent write to disk immediately.</div>
+            </div>
+
+            <div class="sidebar-section">
+                <input
+                    id="historySearch"
+                    class="history-search"
+                    type="search"
+                    placeholder="Search conversations..."
+                />
+                <div id="historyList" class="history-list"></div>
+            </div>
+
+            <div class="sidebar-card">
                 <div class="sidebar-label">Mode</div>
                 <div class="sidebar-value">Assistant</div>
             </div>

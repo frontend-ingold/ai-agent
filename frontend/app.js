@@ -12,21 +12,76 @@ const attach = document.getElementById("attach");
 const button = document.getElementById("send");
 const clearButton = document.getElementById("clear");
 const newChatButton = document.getElementById("newChat");
+const historySearch = document.getElementById("historySearch");
+const historyList = document.getElementById("historyList");
+const projectPath = document.getElementById("projectPath");
+const projectPathInput = document.getElementById("projectPathInput");
+const openProjectBtn = document.getElementById("openProjectBtn");
+const projectError = document.getElementById("projectError");
+const autoApplyToggle = document.getElementById("autoApplyToggle");
 
 let attachments = [];
 let activeAbortController = null;
+let conversationId = null; // null until the backend assigns one (first reply)
+
+// Backend markdown links like "/download/<id>" are relative to the API
+// origin, not wherever this frontend is hosted (localhost vs Vercel) — so
+// any rendered download link needs the API base prefixed onto its href.
+function fixDownloadLinks(html) {
+    return html.replace(/href="\/download\//g, `href="${API_BASE_URL}/download/`);
+}
 
 addSystemMessage("How can I help today?");
 
 button.addEventListener("click", sendMessage);
 attach.addEventListener("click", () => fileInput.click());
 clearButton.addEventListener("click", resetComposer);
-newChatButton.addEventListener("click", () => {
-    if (activeAbortController) activeAbortController.abort();
-    messages.innerHTML = "";
-    resetComposer();
-    addSystemMessage("New conversation started.");
+newChatButton.addEventListener("click", startNewChat);
+
+let historyDebounceTimer = null;
+historySearch.addEventListener("input", () => {
+    clearTimeout(historyDebounceTimer);
+    historyDebounceTimer = setTimeout(() => fetchHistory(historySearch.value.trim()), 250);
 });
+
+openProjectBtn.addEventListener("click", openProject);
+projectPathInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") openProject();
+});
+
+autoApplyToggle.addEventListener("change", async () => {
+    try {
+        const res = await fetch(`${API_BASE_URL}/settings/auto-apply`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ enabled: autoApplyToggle.checked }),
+        });
+        const data = await res.json();
+        autoApplyToggle.checked = Boolean(data.autoApply);
+        addSystemMessage(
+            data.autoApply
+                ? "Auto-apply is ON — file writes will happen without asking for approval."
+                : "Auto-apply is OFF — file writes will ask for approval first."
+        );
+    } catch (err) {
+        console.error("Failed to update auto-apply setting:", err);
+        autoApplyToggle.checked = !autoApplyToggle.checked; // revert on failure
+    }
+});
+
+async function fetchAutoApply() {
+    try {
+        const res = await fetch(`${API_BASE_URL}/settings/auto-apply`);
+        const data = await res.json();
+        autoApplyToggle.checked = Boolean(data.autoApply);
+    } catch (err) {
+        console.error("Failed to load auto-apply setting:", err);
+    }
+}
+
+fetchHistory();
+fetchProjectRoot();
+fetchAutoApply();
 
 input.addEventListener("input", () => {
     input.style.height = "auto";
@@ -266,6 +321,160 @@ function addSystemMessage(text) {
     addCopyButton(div, () => text);
 }
 
+async function fetchProjectRoot() {
+    try {
+        const res = await fetch(`${API_BASE_URL}/project`);
+        const data = await res.json();
+        projectPath.textContent = data.projectRoot || "Not set";
+    } catch (err) {
+        console.error("Failed to load current project folder:", err);
+        projectPath.textContent = "Unavailable";
+    }
+}
+
+async function openProject() {
+    const path = projectPathInput.value.trim();
+    if (!path) return;
+
+    projectError.textContent = "";
+    openProjectBtn.disabled = true;
+    openProjectBtn.textContent = "Opening...";
+
+    try {
+        const res = await fetch(`${API_BASE_URL}/project`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path }),
+        });
+        const data = await res.json();
+
+        if (!res.ok || !data.success) {
+            throw new Error(data.message || "Could not open that folder.");
+        }
+
+        projectPath.textContent = data.projectRoot;
+        projectPathInput.value = "";
+        addSystemMessage(`Opened project folder: ${data.projectRoot}`);
+    } catch (err) {
+        projectError.textContent = err.message;
+    } finally {
+        openProjectBtn.disabled = false;
+        openProjectBtn.textContent = "Open";
+    }
+}
+
+function startNewChat() {
+    if (activeAbortController) activeAbortController.abort();
+    conversationId = null;
+    messages.innerHTML = "";
+    resetComposer();
+    addSystemMessage("New conversation started.");
+    setActiveHistoryItem(null);
+}
+
+// Renders a past message (user or assistant) when reopening a conversation
+// from history. Unlike addUserMessage, there's no image File object to show
+// here — only the text placeholder the backend stored (e.g. "[2 images]").
+function addStaticMessage(role, text) {
+    const type = role === "user" ? "user" : "ai";
+    const label = role === "user" ? "You" : "Assistant";
+    const div = createMessageElement(type, label);
+    const content = document.createElement("div");
+    content.innerHTML = fixDownloadLinks(marked.parse(text || ""));
+    div.appendChild(content);
+    messages.appendChild(div);
+    addCopyButton(div, () => text);
+}
+
+function loadConversationIntoUI(conversation) {
+    if (activeAbortController) activeAbortController.abort();
+    messages.innerHTML = "";
+    conversationId = conversation.id;
+    resetComposer();
+
+    if (!conversation.messages || conversation.messages.length === 0) {
+        addSystemMessage("How can I help today?");
+    } else {
+        conversation.messages.forEach((m) => addStaticMessage(m.role, m.content));
+    }
+
+    messages.scrollTop = messages.scrollHeight;
+    setActiveHistoryItem(conversation.id);
+}
+
+async function openConversation(id) {
+    try {
+        const res = await fetch(`${API_BASE_URL}/conversations/${id}`);
+        if (!res.ok) throw new Error("Conversation not found.");
+        const data = await res.json();
+        loadConversationIntoUI(data.conversation);
+    } catch (err) {
+        console.error("Failed to open conversation:", err);
+    }
+}
+
+function setActiveHistoryItem(id) {
+    [...historyList.querySelectorAll(".history-item")].forEach((el) => {
+        el.classList.toggle("active", el.dataset.id === id);
+    });
+}
+
+async function fetchHistory(query = "") {
+    try {
+        const url = query
+            ? `${API_BASE_URL}/conversations?q=${encodeURIComponent(query)}`
+            : `${API_BASE_URL}/conversations`;
+        const res = await fetch(url);
+        const data = await res.json();
+        renderHistory(data.conversations || []);
+    } catch (err) {
+        console.error("Failed to load conversation history:", err);
+    }
+}
+
+function renderHistory(conversations) {
+    historyList.innerHTML = "";
+
+    if (conversations.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "history-empty";
+        empty.textContent = "No conversations yet.";
+        historyList.appendChild(empty);
+        return;
+    }
+
+    conversations.forEach((conv) => {
+        const item = document.createElement("div");
+        item.className = "history-item" + (conv.id === conversationId ? " active" : "");
+        item.dataset.id = conv.id;
+
+        const title = document.createElement("span");
+        title.className = "history-item-title";
+        title.textContent = conv.title || "New conversation";
+        item.appendChild(title);
+
+        const del = document.createElement("button");
+        del.type = "button";
+        del.className = "history-item-delete";
+        del.innerHTML = "&times;";
+        del.title = "Delete conversation";
+        del.addEventListener("click", async (e) => {
+            e.stopPropagation();
+            try {
+                await fetch(`${API_BASE_URL}/conversations/${conv.id}`, { method: "DELETE" });
+            } catch (err) {
+                console.error("Failed to delete conversation:", err);
+            }
+            if (conv.id === conversationId) startNewChat();
+            fetchHistory(historySearch.value.trim());
+        });
+        item.appendChild(del);
+
+        item.addEventListener("click", () => openConversation(conv.id));
+        historyList.appendChild(item);
+    });
+}
+
 function addStreamingMessage() {
     const div = createMessageElement("ai", "Assistant");
     const content = document.createElement("div");
@@ -277,7 +486,7 @@ function addStreamingMessage() {
 }
 
 function appendMarkdownStream(target, text) {
-    target.innerHTML = marked.parse(text);
+    target.innerHTML = fixDownloadLinks(marked.parse(text));
     messages.scrollTop = messages.scrollHeight;
 }
 
@@ -285,6 +494,20 @@ function appendMarkdownStream(target, text) {
 // coding agent wants to write a file or run a git commit and is waiting on
 // human approval. Format: MARKER + JSON + MARKER.
 const CONTROL_MARKER = "\u0001CONFIRM_ACTION\u0001";
+
+// Sent as the very first thing on every /chat/stream response, before any
+// real content, so the client knows which conversation to keep using for
+// follow-up messages (see agent.js's onConversationId callback).
+const CONVERSATION_ID_MARKER = "\u0001CONVERSATION_ID\u0001";
+
+// Returns { id, rest }. id is null if the closing marker hasn't arrived
+// yet (still buffering) — caller should wait for more chunks in that case.
+function extractConversationId(buffer) {
+    const body = buffer.slice(CONVERSATION_ID_MARKER.length);
+    const endIdx = body.indexOf(CONVERSATION_ID_MARKER);
+    if (endIdx === -1) return { id: null, rest: "" };
+    return { id: body.slice(0, endIdx), rest: body.slice(endIdx + CONVERSATION_ID_MARKER.length) };
+}
 
 function parseControlPayload(buffer) {
     const body = buffer.slice(CONTROL_MARKER.length);
@@ -349,9 +572,10 @@ function renderConfirmationCard(div, content, payload) {
             }
 
             const finalText = result.message || "Done.";
-            content.innerHTML = marked.parse(finalText);
+            content.innerHTML = fixDownloadLinks(marked.parse(finalText));
             messages.scrollTop = messages.scrollHeight;
             addCopyButton(div, () => finalText);
+            fetchHistory(historySearch.value.trim());
         } catch (err) {
             console.error(err);
             content.innerHTML = `<div class="loading">Something went wrong confirming this action.</div>`;
@@ -441,6 +665,7 @@ async function sendMessage() {
     try {
         const form = new FormData();
         form.append("message", text);
+        if (conversationId) form.append("conversationId", conversationId);
 
         const filesToSend = await Promise.all(
             pendingAttachments.map((file) => resizeImageIfNeeded(file))
@@ -475,12 +700,27 @@ async function sendMessage() {
         const decoder = new TextDecoder();
         let textBuffer = "";
         let isControlMessage = false;
+        let conversationIdCaptured = false;
 
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
 
             textBuffer += decoder.decode(value, { stream: true });
+
+            if (!conversationIdCaptured) {
+                if (textBuffer.startsWith(CONVERSATION_ID_MARKER)) {
+                    const { id, rest } = extractConversationId(textBuffer);
+                    if (id === null) continue; // closing marker not arrived yet
+                    conversationId = id;
+                    conversationIdCaptured = true;
+                    textBuffer = rest;
+                } else if (CONVERSATION_ID_MARKER.startsWith(textBuffer) && textBuffer.length < CONVERSATION_ID_MARKER.length) {
+                    continue; // still receiving the opening marker itself
+                } else {
+                    conversationIdCaptured = true; // no marker present, proceed as-is
+                }
+            }
 
             if (!isControlMessage && textBuffer.startsWith(CONTROL_MARKER)) {
                 isControlMessage = true; // stop live-rendering, wait for the full payload
@@ -501,6 +741,8 @@ async function sendMessage() {
         } else if (textBuffer) {
             addCopyButton(div, () => textBuffer);
         }
+
+        fetchHistory(historySearch.value.trim());
     } catch (err) {
         if (err.name === "AbortError") return;
         console.error(err);

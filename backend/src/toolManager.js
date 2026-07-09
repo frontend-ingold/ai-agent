@@ -8,7 +8,7 @@ import { runLint } from "./tools/lint.js";
 import { gitStatus, gitDiff, gitLog, gitCommit } from "./tools/git.js";
 import { codeSearch } from "./tools/codeSearch.js";
 import { getMemory } from "./memory.js";
-import { WRITE_TOOLS } from "./config.js";
+import { WRITE_TOOLS, setProjectRoot, getProjectRoot } from "./config.js";
 
 export async function executeTool(step) {
     switch (step.tool) {
@@ -33,6 +33,18 @@ export async function executeTool(step) {
                 tool: "memory",
                 result: { recent: getMemory(step.limit ?? 20) }
             };
+
+        case "openProject":
+            try {
+                const resolved = setProjectRoot(step.path);
+                return {
+                    success: true,
+                    tool: "openProject",
+                    result: { message: `Project folder switched to: ${resolved}`, projectRoot: resolved }
+                };
+            } catch (err) {
+                return { success: false, error: err.message };
+            }
 
         // --- coding tools ---
         case "readFile":
